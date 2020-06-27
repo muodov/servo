@@ -89,6 +89,7 @@ pub struct HTMLFormElement {
     generation_id: Cell<GenerationId>,
     controls: DomRefCell<Vec<Dom<Element>>>,
     past_names_map: DomRefCell<HashMap<Atom, (Dom<Element>, Tm)>>,
+    firing_submission_events: Cell<bool>,
 }
 
 impl HTMLFormElement {
@@ -105,6 +106,7 @@ impl HTMLFormElement {
             generation_id: Cell::new(GenerationId(0)),
             controls: DomRefCell::new(Vec::new()),
             past_names_map: DomRefCell::new(HashMap::new()),
+            firing_submission_events: Cell::new(false),
         }
     }
 
@@ -661,28 +663,35 @@ impl HTMLFormElement {
         let base = doc.base_url();
         // TODO: Handle browsing contexts (Step 4, 5)
         // Step 6
-        if submit_method_flag == SubmittedFrom::NotFromForm && !submitter.no_validate(self) {
-            if self.interactive_validation().is_err() {
-                // TODO: Implement event handlers on all form control elements
-                self.upcast::<EventTarget>().fire_event(atom!("invalid"));
+        if submit_method_flag == SubmittedFrom::NotFromForm {
+            if self.firing_submission_events.get() {
                 return;
             }
-        }
-        // Step 7
-        // spec calls this "submitterButton" but it doesn't have to be a button,
-        // just not be the form itself
-        let submitter_button = match submitter {
-            FormSubmitter::FormElement(f) => {
-                if f == self {
-                    None
-                } else {
-                    Some(f.upcast::<HTMLElement>())
+            self.firing_submission_events.set(true);
+
+            if !submitter.no_validate(self) {
+                if self.interactive_validation().is_err() {
+                    // TODO: Implement event handlers on all form control elements
+                    self.upcast::<EventTarget>().fire_event(atom!("invalid"));
+                    self.firing_submission_events.set(false);
+                    return;
                 }
-            },
-            FormSubmitter::InputElement(i) => Some(i.upcast::<HTMLElement>()),
-            FormSubmitter::ButtonElement(b) => Some(b.upcast::<HTMLElement>()),
-        };
-        if submit_method_flag == SubmittedFrom::NotFromForm {
+            }
+            // Step 6.4
+            // spec calls this "submitterButton" but it doesn't have to be a button,
+            // just not be the form itself
+            let submitter_button = match submitter {
+                FormSubmitter::FormElement(f) => {
+                    if f == self {
+                        None
+                    } else {
+                        Some(f.upcast::<HTMLElement>())
+                    }
+                },
+                FormSubmitter::InputElement(i) => Some(i.upcast::<HTMLElement>()),
+                FormSubmitter::ButtonElement(b) => Some(b.upcast::<HTMLElement>()),
+            };
+
             let event = SubmitEvent::new(
                 &self.global(),
                 atom!("submit"),
@@ -692,17 +701,20 @@ impl HTMLFormElement {
             );
             let event = event.upcast::<Event>();
             event.fire(self.upcast::<EventTarget>());
+
+            self.firing_submission_events.set(false);
+
             if event.DefaultPrevented() {
                 return;
             }
 
-            // Step 7-3
+            // Step 6.8
             if self.upcast::<Element>().cannot_navigate() {
                 return;
             }
         }
 
-        // Step 8
+        // Step 7
         let encoding = self.pick_encoding();
 
         // Step 9
