@@ -16,6 +16,7 @@ use crate::dom::bindings::codegen::Bindings::HTMLInputElementBinding::HTMLInputE
 use crate::dom::bindings::codegen::Bindings::HTMLTextAreaElementBinding::HTMLTextAreaElementMethods;
 use crate::dom::bindings::codegen::Bindings::NodeListBinding::NodeListMethods;
 use crate::dom::bindings::codegen::Bindings::WindowBinding::WindowBinding::WindowMethods;
+use crate::dom::bindings::error::{Error, Fallible};
 use crate::dom::bindings::inheritance::{Castable, ElementTypeId, HTMLElementTypeId, NodeTypeId};
 use crate::dom::bindings::refcounted::Trusted;
 use crate::dom::bindings::reflector::DomObject;
@@ -241,6 +242,67 @@ impl HTMLFormElementMethods for HTMLFormElement {
     // https://html.spec.whatwg.org/multipage/#the-form-element:concept-form-submit
     fn Submit(&self) {
         self.submit(SubmittedFrom::FromForm, FormSubmitter::FormElement(self));
+    }
+
+    // https://html.spec.whatwg.org/multipage/#dom-form-requestsubmit
+    fn RequestSubmit(&self, submitter: Option<&HTMLElement>) -> Fallible<()> {
+        let submitter: FormSubmitter = match submitter {
+            Some(submitter_element) => {
+                // Step 1.1
+                let error_not_a_submit_button =
+                    Err(Error::Type("submitter must be a submit button".to_string()));
+
+                let element = match submitter_element.upcast::<Node>().type_id() {
+                    NodeTypeId::Element(ElementTypeId::HTMLElement(element)) => element,
+                    _ => {
+                        return error_not_a_submit_button;
+                    },
+                };
+
+                let submit_button = match element {
+                    HTMLElementTypeId::HTMLInputElement => FormSubmitter::InputElement(
+                        &submitter_element
+                            .downcast::<HTMLInputElement>()
+                            .expect("Failed to downcast submitter elem to HTMLInputElement."),
+                    ),
+                    HTMLElementTypeId::HTMLButtonElement => FormSubmitter::ButtonElement(
+                        &submitter_element
+                            .downcast::<HTMLButtonElement>()
+                            .expect("Failed to downcast submitter elem to HTMLButtonElement."),
+                    ),
+                    _ => {
+                        return error_not_a_submit_button;
+                    },
+                };
+
+                if !submit_button.is_submit_button() {
+                    return error_not_a_submit_button;
+                }
+
+                let submitters_owner = submit_button.form_owner();
+
+                // Step 1.2
+                let owner = match submitters_owner {
+                    Some(owner) => owner,
+                    None => {
+                        return Err(Error::NotFound);
+                    },
+                };
+
+                if *owner != *self {
+                    return Err(Error::NotFound);
+                }
+
+                submit_button
+            },
+            None => {
+                // Step 2
+                FormSubmitter::FormElement(&self)
+            },
+        };
+        // Step 3
+        self.submit(SubmittedFrom::NotFromForm, submitter);
+        Ok(())
     }
 
     // https://html.spec.whatwg.org/multipage/#dom-form-reset
@@ -1232,11 +1294,14 @@ pub enum FormMethod {
     FormDialog,
 }
 
+/// <https://html.spec.whatwg.org/multipage/#form-associated-element>
 #[derive(Clone, Copy, MallocSizeOf)]
 pub enum FormSubmitter<'a> {
     FormElement(&'a HTMLFormElement),
     InputElement(&'a HTMLInputElement),
-    ButtonElement(&'a HTMLButtonElement), // TODO: image submit, etc etc
+    ButtonElement(&'a HTMLButtonElement),
+    // TODO: implement other types of form associated elements
+    // (including custom elements) that can be passed as submitter.
 }
 
 impl<'a> FormSubmitter<'a> {
@@ -1330,6 +1395,27 @@ impl<'a> FormSubmitter<'a> {
                     |i| i.FormNoValidate(),
                     |f| f.NoValidate(),
                 ),
+        }
+    }
+
+    // https://html.spec.whatwg.org/multipage/#concept-submit-button
+    fn is_submit_button(&self) -> bool {
+        match *self {
+            // https://html.spec.whatwg.org/multipage/#image-button-state-(type=image)
+            // https://html.spec.whatwg.org/multipage/#submit-button-state-(type=submit)
+            FormSubmitter::InputElement(input_element) => input_element.is_submit_button(),
+            // https://html.spec.whatwg.org/multipage/#attr-button-type-submit-state
+            FormSubmitter::ButtonElement(button_element) => button_element.is_submit_button(),
+            _ => false,
+        }
+    }
+
+    // https://html.spec.whatwg.org/multipage/#form-owner
+    fn form_owner(&self) -> Option<DomRoot<HTMLFormElement>> {
+        match *self {
+            FormSubmitter::ButtonElement(button_el) => button_el.form_owner(),
+            FormSubmitter::InputElement(input_el) => input_el.form_owner(),
+            _ => None,
         }
     }
 }
