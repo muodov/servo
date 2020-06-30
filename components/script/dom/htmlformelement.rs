@@ -664,11 +664,13 @@ impl HTMLFormElement {
         // TODO: Handle browsing contexts (Step 4, 5)
         // Step 6
         if submit_method_flag == SubmittedFrom::NotFromForm {
+            // Step 6.1
             if self.firing_submission_events.get() {
                 return;
             }
+            // Step 6.2
             self.firing_submission_events.set(true);
-
+            // Step 6.3
             if !submitter.no_validate(self) {
                 if self.interactive_validation().is_err() {
                     // TODO: Implement event handlers on all form control elements
@@ -692,6 +694,7 @@ impl HTMLFormElement {
                 FormSubmitter::ButtonElement(b) => Some(b.upcast::<HTMLElement>()),
             };
 
+            // Step 6.5
             let event = SubmitEvent::new(
                 &self.global(),
                 atom!("submit"),
@@ -702,12 +705,12 @@ impl HTMLFormElement {
             let event = event.upcast::<Event>();
             event.fire(self.upcast::<EventTarget>());
 
+            // Step 6.6
             self.firing_submission_events.set(false);
-
+            // Step 6.7
             if event.DefaultPrevented() {
                 return;
             }
-
             // Step 6.8
             if self.upcast::<Element>().cannot_navigate() {
                 return;
@@ -717,35 +720,35 @@ impl HTMLFormElement {
         // Step 7
         let encoding = self.pick_encoding();
 
-        // Step 9
+        // Step 8
         let mut form_data = match self.get_form_dataset(Some(submitter), Some(encoding)) {
             Some(form_data) => form_data,
             None => return,
         };
 
-        // Step 10
+        // Step 9
         if self.upcast::<Element>().cannot_navigate() {
             return;
         }
 
-        // Step 11
+        // Step 10
         let mut action = submitter.action();
 
-        // Step 12
+        // Step 11
         if action.is_empty() {
             action = DOMString::from(base.as_str());
         }
-        // Step 13-14
+        // Step 12-13
         let action_components = match base.join(&action) {
             Ok(url) => url,
             Err(_) => return,
         };
-        // Step 15-17
+        // Step 14-16
         let scheme = action_components.scheme().to_owned();
         let enctype = submitter.enctype();
         let method = submitter.method();
 
-        // Step 18-21
+        // Step 17-21
         let target_attribute_value = submitter.target();
         let source = doc.browsing_context().unwrap();
         let (maybe_chosen, _new) = source.choose_browsing_context(target_attribute_value, false);
